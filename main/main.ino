@@ -1,6 +1,11 @@
 #include <SPI.h>
 #include <Ethernet.h>
 #include <PubSubClient.h>
+#include <curveFitting.h>
+
+#define relay 5
+#define trigPin 6
+#define echoPin 7
 
 byte mac[] = { 0x00, 0xAA, 0xBB, 0xCC, 0xDE, 0x02 };
 IPAddress broker(10,0,30,100);
@@ -8,6 +13,7 @@ int        port     = 1883;
 const char topic[]  = "garage_door_status";
 const char username[] = "homeassistant";
 const char password[] = "ohGae1waiquo0hohthie5xa9AiThovu3ohtheip9ohohj6teingo7soh7oe1ahdi";
+double distanceBuffer[20];
 
 const long interval = 8000;
 unsigned long previousMillis = 0;
@@ -39,8 +45,13 @@ PubSubClient client(broker, 1883, callback, ethernetClient);
 void setup()
 {
   Serial.begin(9600);
+  pinMode(relay, OUTPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
   while(!ipConnect()){}
   while(!mqttConnect()){}
+  client.publish("garage_door_command","idling");
+  client.publish("garage_door_status","opened");
 }
 
 void loop()
@@ -50,18 +61,22 @@ void loop()
 }
 
 void openGarageDoor(){
+  Serial.println("Opening garage door...");
   client.publish("garage_door_command","idling");
   if(!opened){
     client.publish("garage_door_status","moving");
-        activateGarageDoor();
-    if (!isMovingUp()){
+    activateGarageDoor();
+    if (isMovingDown()){
+      Serial.println("Door is moving wrong way, reversing...");
       activateGarageDoor();
       delay(500);
       activateGarageDoor();
     }
     delay(4000);
-    if (doorIsUp()){
+    if (doorIsOpened()){
       markDoorOpened();
+    } else {
+     openGarageDoor();
     }
   } else {
     Serial.println("Door already in good state");
@@ -69,18 +84,22 @@ void openGarageDoor(){
 }
 
 void closeGarageDoor(){
+  Serial.println("Closing garage door...");
   client.publish("garage_door_command","idling");
   if(opened){
     client.publish("garage_door_status","moving");
     activateGarageDoor();
     if (isMovingUp()){
+      Serial.println("Door is moving wrong way, reversing...");
       activateGarageDoor();
       delay(500);
       activateGarageDoor();
     }
     delay(4000);
-    if (!doorIsUp()){
-          markDoorClosed();
+    if (doorIsClosed()){
+      markDoorClosed();
+    } else {
+      closeGarageDoor();
     }
   } else {
     Serial.println("Door already in good state");
@@ -88,27 +107,112 @@ void closeGarageDoor(){
 }
 
 
+double mesureDistance(){
+  delay(5);
+  digitalWrite(trigPin, LOW);
+  delay(10);
+  digitalWrite(trigPin, HIGH);
+  delay(50);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  long temp = duration * 0.034 / 2;
+  if (temp >= 12) {temp = 14;}
+  if (temp <= 6) {temp = 6;}
+  return temp;
+}
+
 
 void activateGarageDoor() {
-  //TODO
+  Serial.println("Activating relay...");
+  digitalWrite(relay, LOW);
+  delay(5);
+  digitalWrite(relay, HIGH);
+  delay(2000);
+  digitalWrite(relay, LOW);
+  delay(5);
 }
 
 bool isMovingUp(){
-  //TODO
+  fillDistanceBuffer();
+  int temp = linearRegression();
+  if (temp > 0) {
+    Serial.println("Door is moving up !");
+    return true;
+  }
+  return false;
 }
 
-bool doorIsUp(){
-  //TODO
+bool isMovingDown(){
+  fillDistanceBuffer();
+  int temp = linearRegression();
+  if (temp < 0) {
+    Serial.println("Door is moving down !");
+    return true;
+  }
+  return false;
+}
+
+bool doorIsClosed(){
+  fillDistanceBuffer();
+  int temp = linearRegression();
+  if (temp > -0.1 && temp < 0.1) {
+    int avg = average();
+    if ( avg > 5.0 && avg < 8.0){
+      return true;
+    }
+  }
+  return false;
+}
+
+bool doorIsOpened(){
+  fillDistanceBuffer();
+  int temp = linearRegression();
+  if (temp > -0.1 && temp < 0.1) {
+    double avg = average();
+    if ( avg > 11.0 && avg < 16.0){
+      return true;
+    }
+  }
+  return false;
+}
+
+double average(){
+  double temp = 0;
+  for (int i =0; i < 20 ; i++){
+    temp = temp + distanceBuffer[i];
+  }
+  Serial.print("Average buffer value is :");
+  Serial.println(temp/20);
+  return temp / 20;
+}
+
+double linearRegression(){
+  double coeffs[2];
+  fitCurve(1, 20, distanceBuffer, 2, coeffs);
+  Serial.print("Linear regression factor is :");
+  Serial.print(coeffs[0]);
+  Serial.print(":");
+  Serial.println(coeffs[0]);
+  return coeffs[0];
+}
+
+void fillDistanceBuffer(){
+  for(int i = 0; i < 20 ; i++){
+    delay(300);
+    distanceBuffer[i] = mesureDistance();
+  }
 }
 
 void markDoorOpened() {
     client.publish("garage_door_status","opened");
     opened = true;
+    Serial.println("Garage door is opened !");
 }
 
 void markDoorClosed() {
     client.publish("garage_door_status","closed");
     opened = false;
+    Serial.println("Garage door is closed !");
 }
 
 bool ipConnect()
