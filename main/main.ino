@@ -3,51 +3,60 @@
 #include <PubSubClient.h>
 #include <curveFitting.h>
 
+// Pin configuration
 #define relay 5
 #define trigPin 6
 #define echoPin 7
+
+// IP configuration
+const byte mac[] = { 0x00, 0xAA, 0xBB, 0xCC, 0xDE, 0x02 };
+
+// MQTT configuration
+#define username "homeassistant"
+#define password "ohGae1waiquo0hohthie5xa9AiThovu3ohtheip9ohohj6teingo7soh7oe1ahdi"
+#define port 1883
+const IPAddress broker(10,0,30,100);
+
+// Topic configuration
 #define state_topic "state/garage_door_1"
 #define command_topic "command/garage_door_1"
 #define status_topic "telemetry/garage_door_1"
+
+// Topic value configuration
 #define status_state_online "online"
 #define max_open_time 18000
-#define username "homeassistant"
-#define password "ohGae1waiquo0hohthie5xa9AiThovu3ohtheip9ohohj6teingo7soh7oe1ahdi"
+#define sample_time 30
 
-byte mac[] = { 0x00, 0xAA, 0xBB, 0xCC, 0xDE, 0x02 };
-IPAddress broker(10,0,30,100);
-int        port     = 1883;
+// Global variable declaration
 double distanceBuffer[20];
-bool inited = false;
-
-const long interval = 8000;
-unsigned long previousMillis = 0;
-
 bool opened = true;
 
-
+/* Handle subscribed topic different values, declared before static declaration*/
 void callback(char* topic, byte* payload, unsigned int length) {
   payload[length] = '\0';
   if (strcmp((char *)topic, command_topic) == 0) {
     if (strcmp((char *)payload, "open") == 0){
-      Serial.println("Opening door");
       openGarageDoor();
     }
     else if (strcmp((char *)payload, "close") == 0) {
-      Serial.println("Closing door");
       closeGarageDoor();
     }else if (strcmp((char *)payload, "stop") == 0) {
       stopGarageDoor();
     } else {
-      Serial.println("Invalid command received");
     }
   }
 }
 
-
+// IP and MQTT client instaciation
 EthernetClient ethernetClient;
-PubSubClient client(broker, 1883, callback, ethernetClient);
+PubSubClient client(broker, port, callback, ethernetClient);
 
+
+/*
+* #########################################################
+* Command handlers
+* #########################################################
+*/
 
 void openGarageDoor(){
   Serial.println("[LOG] Opening command received");
@@ -99,6 +108,12 @@ void stopGarageDoor(){
   }
 }
 
+/*
+* #########################################################
+* State evaluation functions
+* #########################################################
+*/
+
 bool isMovingUp(){
   fillDistanceBuffer();
   double temp = 0;
@@ -142,6 +157,29 @@ bool isMovingDown(){
   }
 }
 
+bool doorIsOpened(){
+fillDistanceBuffer();
+double avg = average();
+if ( avg < 13.0){
+  return true;
+}
+return false;
+}
+
+void checkDoorStatus(){
+if (doorIsOpened() == true){
+  markDoorOpened();
+} else {
+  markDoorClosed();
+}
+}
+
+
+/*
+* #########################################################
+* Captor
+* #########################################################
+*/
 
 double mesureDistance(){
   delay(5);
@@ -168,22 +206,6 @@ void activateGarageDoor() {
   delay(5);
 }
 
-bool doorIsOpened(){
-  fillDistanceBuffer();
-    double avg = average();
-    if ( avg < 13.0){
-      return true;
-    }
-  return false;
-}
-
-void checkDoorStatus(){
-  if (doorIsOpened() == true){
-    markDoorOpened();
-  } else {
-    markDoorClosed();
-  }
-}
 
 double average(){
   double temp = 0;
@@ -208,7 +230,7 @@ double linearRegression(){
 
 void fillDistanceBuffer(){
   for(int i = 0; i < 20 ; i++){
-    delay(10);
+    delay(sample_time);
     distanceBuffer[i] = mesureDistance();
   }
 }
@@ -228,46 +250,26 @@ bool ipConnect()
   IPAddress current = Ethernet.localIP();
   if((current == IPAddress(0,0,0,0)) || (current == IPAddress(255,255,255,255))){
     if (Ethernet.begin(mac) == 0) {
-      //Serial.println("Failed to configure Ethernet using DHCP");
       if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-        //Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
         while(1);
       } else if (Ethernet.linkStatus() == LinkOFF) {
-        //Serial.println("Ethernet cable is not connected.");
       }
-      //Serial.println("Retrying in 10 seconds...");
       delay(10000);
       return false;
     } else {
-      //Serial.print("Ethernet shield setup successfully with IP: " );
-      //Serial.println(Ethernet.localIP());
       return true;
     }
-  } else {
-      if(!inited){
-        //Serial.print("LocalIP already assigned to : ");
-        //Serial.println(Ethernet.localIP());
-        inited = true;
-      }
-    return true;
-    
   }
-  return false;
+  return true;
 }
 
 bool mqttConnect()
 {
   if (!client.connect("arduinoClient", username, password)) {
-    //Serial.print("MQTT connection failed! Error code = ");
-    //Serial.println(client.state());
-    //Serial.println("Retrying in 10 seconds...");
     delay(10000);
     return false;
   } else {
-    if (!inited){
-      //Serial.println("Connected to the MQTT broker!");
-      inited = true;
-    }
+    client.subscribe(command_topic);
     return true;
   }
   return false;
@@ -283,7 +285,6 @@ void setup()
   pinMode(echoPin, INPUT);
   while(!ipConnect()){}
   while(!mqttConnect()){}
-  client.subscribe(command_topic);
 }
 
 void loop()
@@ -291,11 +292,11 @@ void loop()
   while(!ipConnect()){}
   while(!mqttConnect()){}
   client.publish(status_topic, status_state_online);
+  client.loop();
+  checkDoorStatus();
   if (opened){
         client.publish(state_topic,"open");
   } else {
         client.publish(state_topic,"closed");
   }
-  checkDoorStatus();
-  client.loop();
 }
