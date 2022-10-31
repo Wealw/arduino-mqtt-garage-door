@@ -9,7 +9,7 @@
 #define echoPin 7
 
 // IP configuration
-const byte mac[] = { 0x00, 0xAA, 0xBB, 0xCC, 0xDE, 0x02 };
+byte mac[] = { 0x00, 0xAA, 0xBB, 0xCC, 0xDE, 0x02 };
 
 // MQTT configuration
 #define username "homeassistant"
@@ -25,7 +25,7 @@ const IPAddress broker(10,0,30,100);
 // Topic value configuration
 #define status_state_online "online"
 #define max_open_time 18000
-#define sample_time 30
+#define sample_time 15
 
 // Global variable declaration
 double distanceBuffer[20];
@@ -65,7 +65,7 @@ void openGarageDoor(){
     Serial.println("[LOG] Opening garage door");
     activateGarageDoor();
     markDoorOpened();
-    delay(500);
+    delay(700);
     if (isMovingDown()){
       //Serial.println("Door is moving wrong way, reversing...");
       activateGarageDoor();
@@ -84,7 +84,7 @@ void closeGarageDoor(){
     if(opened && linearRegression() == 0.0){
       Serial.println("[LOG] Closing garage door");
       activateGarageDoor();
-      delay(500);
+      delay(700);
       if (isMovingUp()){
         //Serial.println("Door is moving wrong way, reversing...");
         activateGarageDoor();
